@@ -1,16 +1,116 @@
+use teloxide::{prelude2::*, utils::command::BotCommand};
 use std::result::Result;
 use reqwest::blocking::Client;
 use scraper::Html;
 use scraper::Selector;
 use scraper::ElementRef;
+use std::error::Error;
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
 
-fn main() {
-    
+/*
+    static state variables
+*/
+
+static SUBSCRIBERS: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    Mutex::new(m)
+});
+
+static OBSERVED_SALES: Lazy<Mutex<HashMap<String, Vec<String>>>> = Lazy::new(|| {
+    let mut m = HashMap::new();
+    Mutex::new(m)
+});
+
+/*
+    structs:
+        -Sale
+    enums:
+        -Telegram commands 
+*/
+
+struct Sale {
+    sale_location: Option<String>,
+    sale_href: Option<String>,
+    sale_price: Option<String>,
+}
+
+#[derive(BotCommand, Clone)]
+#[command(rename = "lowercase", description = "These commands are supported:")]
+enum Command {
+    #[command(description = "display this text.")]
+    Help,
+    #[command(description = "Subscribe for flats")]
+    Subscribe,
+    #[command(description = "Unsubscribe from flats")]
+    Unsubscribe,
+}
+
+/*
+    MAIN
+*/
+
+#[tokio::main]
+async fn main() {
+    pretty_env_logger::init();
+    log::info!("Starting simple_commands_bot...");
+    let bot = Bot::from_env().auto_send();
+    teloxide::repls2::commands_repl(bot, answer, Command::ty()).await;
+}
+
+
+/*
+    telegram command->response mapping fn
+*/
+
+async fn answer(
+    bot: AutoSend<Bot>,
+    message: Message,
+    command: Command,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    match command {
+        Command::Help => {bot.send_message(message.chat.id, Command::descriptions()).await?;},
+        Command::Subscribe => {
+            let sales = scrape();
+            for sale in sales.into_iter() {
+                let location = match sale.sale_location {
+                    Some(l) => String::from(l),
+                    None => String::from("Unknown location")
+                };
+                let price = match sale.sale_price {
+                    Some(l) => String::from(l),
+                    None => String::from("Unknown price")
+                };
+                let href = match sale.sale_href {
+                    Some(l) => String::from(l),
+                    None => String::from("Unknown link")
+                };
+                
+                bot.send_message(
+                    message.chat.id, 
+                    format!("NEW SALE {}:\n\t{}\n{}", location, price, href),
+                ).await?;
+            }
+        },
+        Command::Unsubscribe => {bot.send_message(message.chat.id, Command::descriptions()).await?;},
+    };
+    Ok(())
+}
+
+/*
+    scraping fns
+*/
+
+fn scrape() -> Vec<Sale> {
     let url = "https://www.nepremicnine.net/oglasi-najem/ljubljana-mesto/stanovanje/";
     // let url = "https://www.nepremicnine.net/oglasi-najem/juzna-primorska/stanovanje/";
     
     let mut next_page = true;
     let mut next_page_to_scrape = String::from(url);
+
+    let mut sales = Vec::new();
 
     while next_page {
         let html = fetch_page(next_page_to_scrape.clone());
@@ -26,6 +126,12 @@ fn main() {
             
             let sale_href = get_href(sale);
             println!("{:?}", sale_href);
+
+            sales.push(Sale{ 
+                sale_location, 
+                sale_price, 
+                sale_href
+            });
         }
 
         // is there a next page?
@@ -37,6 +143,7 @@ fn main() {
             };
         }
     }
+    sales
 }
 
 fn get_price(sale: ElementRef) -> Option<String> {
