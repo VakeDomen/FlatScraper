@@ -1,4 +1,4 @@
-use teloxide::{prelude2::*, utils::command::BotCommand};
+use teloxide::{prelude2::*, utils::command::BotCommand };
 use std::result::Result;
 use reqwest::blocking::Client;
 use scraper::Html;
@@ -6,23 +6,32 @@ use scraper::Selector;
 use scraper::ElementRef;
 use std::error::Error;
 use std::collections::HashMap;
-use std::fmt;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
+use tokio_cron_scheduler::{JobScheduler, Job};
+use std::thread;
+
 
 /*
     static state variables
 */
 
-static SUBSCRIBERS: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| {
-    let mut m = HashMap::new();
+static SUBSCRIBERS: Lazy<Mutex<HashMap<i64, Vec<String>>>> = Lazy::new(|| {
+    let m = HashMap::new();
     Mutex::new(m)
 });
 
-static OBSERVED_SALES: Lazy<Mutex<HashMap<String, Vec<String>>>> = Lazy::new(|| {
-    let mut m = HashMap::new();
+static OBSERVED_SALES: Lazy<Mutex<HashMap<i64, Vec<String>>>> = Lazy::new(|| {
+    let m = HashMap::new();
     Mutex::new(m)
 });
+
+// static BOT: Lazy<Mutex<AutoSend<Bot>>> = Lazy::new(|| {
+//     let mut m = Bot::from_env().auto_send();
+//     Mutex::new(m)
+// });
+
+
 
 /*
     structs:
@@ -30,8 +39,9 @@ static OBSERVED_SALES: Lazy<Mutex<HashMap<String, Vec<String>>>> = Lazy::new(|| 
     enums:
         -Telegram commands 
 */
-
+#[derive(Clone, Debug)]
 struct Sale {
+    sale_id: Option<String>,
     sale_location: Option<String>,
     sale_href: Option<String>,
     sale_price: Option<String>,
@@ -43,9 +53,11 @@ enum Command {
     #[command(description = "display this text.")]
     Help,
     #[command(description = "Subscribe for flats")]
-    Subscribe,
+    Subscribe(String),
     #[command(description = "Unsubscribe from flats")]
-    Unsubscribe,
+    Unsubscribe(String),
+    #[command(description = "List all subscriptions")]
+    List,
 }
 
 /*
@@ -55,11 +67,58 @@ enum Command {
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
+
+
     log::info!("Starting simple_commands_bot...");
     let bot = Bot::from_env().auto_send();
+    // *BOT.lock().unwrap() = Some(bot.clone());
+
+    // match thread::Builder::new().name("Cron Thread".to_string()).spawn(move || {
+    //     run_cron(cron_bot);
+    // }) {
+    //     Ok(res) => println!("Run CRON thread!"),
+    //     Err(err) => println!("Running CRON thread failed.."),
+    // }
+    thread::spawn(|| {
+        run_cron();
+    });
+    
+    
+    println!("Running telegram bot!");
     teloxide::repls2::commands_repl(bot, answer, Command::ty()).await;
+    
+    // Await the result of the spawned task.
 }
 
+#[tokio::main]
+async fn run_cron() {
+    let mut sched = JobScheduler::new();
+  
+    match sched.add(Job::new_async("0 5,10,15,20,25,30,35,40,45,50,55,0 * * * *", move |_, _|  Box::pin(async { 
+        match scrape().await {
+            Ok(_) => (),
+            Err(e) => println!("{:?}", e)
+        }
+    })).unwrap()) {
+        Ok(c) => println!("Started cron!: {:?}", c),
+        Err(e) => println!("Something went wrong scheduling CRON: {:?}", e)
+    };
+
+    #[cfg(feature = "signal")]
+    sched.shutdown_on_ctrl_c();
+
+    match sched.set_shutdown_handler(Box::new(|| {
+        Box::pin(async move {
+          println!("Shut down done");
+        })
+    })) {
+        Ok(c) => println!("Shutdown handler set for cron!: {:?}", c),
+        Err(e) => println!("Something went wrong setting shutdown handler for CRON: {:?}", e)
+    };
+    if let Err(e) = sched.start().await {
+        eprintln!("Error on scheduler {:?}", e);
+    }
+}
 
 /*
     telegram command->response mapping fn
@@ -71,42 +130,145 @@ async fn answer(
     command: Command,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     match command {
-        Command::Help => {bot.send_message(message.chat.id, Command::descriptions()).await?;},
-        Command::Subscribe => {
-            let sales = scrape();
-            for sale in sales.into_iter() {
-                let location = match sale.sale_location {
-                    Some(l) => String::from(l),
-                    None => String::from("Unknown location")
-                };
-                let price = match sale.sale_price {
-                    Some(l) => String::from(l),
-                    None => String::from("Unknown price")
-                };
-                let href = match sale.sale_href {
-                    Some(l) => String::from(l),
-                    None => String::from("Unknown link")
-                };
-                
-                bot.send_message(
-                    message.chat.id, 
-                    format!("NEW SALE {}:\n\t{}\n{}", location, price, href),
-                ).await?;
-            }
-        },
-        Command::Unsubscribe => {bot.send_message(message.chat.id, Command::descriptions()).await?;},
+        Command::Help => { bot.send_message(message.chat.id, Command::descriptions()).await? },
+        Command::Unsubscribe(url) => { bot.send_message(message.chat.id, unsubscribe(&bot, message, url)).await? },
+        Command::Subscribe(url) => { bot.send_message(message.chat.id, subscribe(&bot, message, url)).await? },
+        Command::List => { bot.send_message(message.chat.id, list_subscritions(&bot, message)).await? },
     };
     Ok(())
+}
+
+fn list_subscritions(
+    _: &AutoSend<Bot>,
+    message: Message,
+)  -> String  {
+    let mut subs = SUBSCRIBERS.lock().unwrap();
+    match subs.get_mut(&message.chat.id) {
+        Some(v) =>  v.join("\n"),
+        None => format!("Not subbed to anything..."),
+    }
+}
+
+fn unsubscribe(
+    _: &AutoSend<Bot>,
+    message: Message,
+    url: String,
+) -> String {
+    let mut subs = SUBSCRIBERS.lock().unwrap();
+    match subs.get_mut(&message.chat.id) {
+        Some(v) =>  {
+            if v.iter().find(|&x| *x == *url) != None {
+                let index = v.iter().position(|x| *x == *url).unwrap();
+                v.remove(index);
+                println!("Removed subscription: {:?}", url);
+                println!("New state: {:?}", subs);
+                format!("Successfully unsubed from link.")
+            } else {
+                println!("Sub does not exist: {:?}", subs);
+                format!("Not subed to that link.")
+            }
+        },
+        None => format!("Not subbed to anything..."),
+    }
+}
+
+
+fn subscribe(
+    _: &AutoSend<Bot>,
+    message: Message,
+    url: String,
+) -> String {
+    let mut subs = SUBSCRIBERS.lock().unwrap();
+    subs.entry(message.chat.id).or_insert(Vec::new());
+    
+    match subs.get_mut(&message.chat.id) {
+        Some(v) =>  {
+            if v.iter().find(|&x| *x == *url) == None {
+                v.push(url);
+                println!("New subscription: {:?}", subs);
+                format!("Successfully subed to link.")
+            } else {
+                println!("Existing subscription: {:?}", subs);
+                format!("Already subed to link.")
+            }
+        },
+        None => format!("Something is not right..."),
+    }
 }
 
 /*
     scraping fns
 */
-
-fn scrape() -> Vec<Sale> {
-    let url = "https://www.nepremicnine.net/oglasi-najem/ljubljana-mesto/stanovanje/";
-    // let url = "https://www.nepremicnine.net/oglasi-najem/juzna-primorska/stanovanje/";
+async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let subs = SUBSCRIBERS.lock().unwrap();
+    println!("HEY");
+    for (subscriber, jobs) in &*subs {
+        for job in jobs {
+            
+            let sales = scrape_url(job);
+            let notification_sales = filter_to_notify(subscriber, sales);
+            
+            for sale in notification_sales {
+                let sub_id = *subscriber;
+                tokio::task::spawn(async move {
+                    let location = match sale.sale_location {
+                        Some(l) => String::from(l),
+                        None => String::from("Unknown location")
+                    };
+                    let price = match sale.sale_price {
+                        Some(l) => String::from(l),
+                        None => String::from("Unknown price")
+                    };
+                    let href = match sale.sale_href {
+                        Some(l) => String::from(l),
+                        None => String::from("Unknown link")
+                    };
+                                
+                    match Bot::from_env().auto_send().send_message(
+                        sub_id,
+                        format!("{}:\n\t{}\n{}", location, price, href)
+                    ).await {
+                        Ok(e) => println!("{:?}", e),
+                        Err(e) => println!("{:?}", e),
+                    };
+                });
+            }
+        }
+    }
     
+    Ok(())
+}
+
+fn filter_to_notify(subscriber: &i64, sales: Vec<Sale>) -> Vec<Sale> {
+    let mut sales_to_notify: Vec<Sale> = Vec::new();
+    let mut seen = OBSERVED_SALES.lock().unwrap();
+    let sales_ids: Vec<String> = sales.iter().map(|sale| {
+        match &sale.sale_id {
+            Some(id) => String::from(id),
+            None => String::from("missing")
+        }
+    }).collect();
+    match seen.get(subscriber) {
+        Some(seen_by_sub) => {
+            for sale in sales {
+                let sale_id = match &sale.sale_id {
+                    Some(id) => String::from(id),
+                    None => String::from("missing")
+                };
+                if !seen_by_sub.contains(&sale_id) {
+                    sales_to_notify.push(sale);
+                }
+            }
+        },
+        None => {
+            seen.insert(*subscriber, sales_ids);
+        },
+    }
+    // let mut to_notify = Vec::new();
+    sales_to_notify
+}
+
+fn scrape_url(url: &str) -> Vec<Sale> {
     let mut next_page = true;
     let mut next_page_to_scrape = String::from(url);
 
@@ -118,16 +280,13 @@ fn scrape() -> Vec<Sale> {
         let selector = Selector::parse(r#"div[itemprop="item"]"#).unwrap();
         for sale in html.select(&selector) {
             
+            let sale_id = get_id(sale);
             let sale_location = get_location(sale);
-            println!("{:?}", sale_location);
-            
             let sale_price = get_price(sale);
-            println!("{:?}", sale_price);
-            
             let sale_href = get_href(sale);
-            println!("{:?}", sale_href);
 
             sales.push(Sale{ 
+                sale_id,
                 sale_location, 
                 sale_price, 
                 sale_href
@@ -147,17 +306,17 @@ fn scrape() -> Vec<Sale> {
 }
 
 fn get_price(sale: ElementRef) -> Option<String> {
-    let pricae_selector = Selector::parse(r#"span[class="cena"]"#).unwrap();
-    for price_dom in sale.select(&pricae_selector) {
+    let price_selector = Selector::parse(r#"span[class="cena"]"#).unwrap();
+    for price_dom in sale.select(&price_selector) {
         return Some(price_dom.inner_html());
     }
     None
 }
 
 fn get_href(sale: ElementRef) -> Option<String> {
-    let location = Selector::parse(r#"h2[itemprop="name"]"#).unwrap();
-    for title_location in sale.select(&location) {
-        return match title_location.value().attr("data-href") {
+    let href_selector = Selector::parse(r#"h2[itemprop="name"]"#).unwrap();
+    for href_dom in sale.select(&href_selector) {
+        return match href_dom.value().attr("data-href") {
             Some(e) => Some(String::from("https://www.nepremicnine.net") + e),
             None => None
         };
@@ -166,9 +325,26 @@ fn get_href(sale: ElementRef) -> Option<String> {
 }
 
 fn get_location(sale: ElementRef) -> Option<String> {
-    let location = Selector::parse(r#"span[class="title"]"#).unwrap();
-    for title_location in sale.select(&location) {
-        return Some(title_location.inner_html());
+    let location_selector = Selector::parse(r#"span[class="title"]"#).unwrap();
+    for location_dom in sale.select(&location_selector) {
+        return Some(location_dom.inner_html());
+    }
+    None
+}
+
+fn get_id(sale: ElementRef) -> Option<String> {
+    let id_selector = Selector::parse(r#"h2[itemprop="name"]"#).unwrap();
+    for id_containing_dom in sale.select(&id_selector) {
+        return match id_containing_dom.value().attr("data-href") {
+            Some(e) => {
+                let split = e.split("_");
+                match split.last() {
+                    Some(s) => Some(String::from(s)),
+                    None => None
+                }
+            },
+            None => None
+        };
     }
     None
 }
