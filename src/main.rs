@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use tokio_cron_scheduler::{JobScheduler, Job};
 use std::thread;
+use serde_any::*;
 
 
 /*
@@ -17,13 +18,17 @@ use std::thread;
 */
 
 static SUBSCRIBERS: Lazy<Mutex<HashMap<i64, Vec<String>>>> = Lazy::new(|| {
-    let m = HashMap::new();
-    Mutex::new(m)
+    match serde_any::from_file("subscribers.json") {
+        Ok(hm) => Mutex::new(hm),
+        Err(_) => Mutex::new(HashMap::new())
+    }
 });
 
 static OBSERVED_SALES: Lazy<Mutex<HashMap<i64, Vec<String>>>> = Lazy::new(|| {
-    let m = HashMap::new();
-    Mutex::new(m)
+    match serde_any::from_file("sales.json") {
+        Ok(hm) => Mutex::new(hm),
+        Err(_) => Mutex::new(HashMap::new())
+    }
 });
 
 // static BOT: Lazy<Mutex<AutoSend<Bot>>> = Lazy::new(|| {
@@ -45,6 +50,7 @@ struct Sale {
     sale_location: Option<String>,
     sale_href: Option<String>,
     sale_price: Option<String>,
+    sale_size: Option<String>,
 }
 
 #[derive(BotCommand, Clone)]
@@ -155,7 +161,7 @@ fn unsubscribe(
     url: String,
 ) -> String {
     let mut subs = SUBSCRIBERS.lock().unwrap();
-    match subs.get_mut(&message.chat.id) {
+    let resp = match subs.get_mut(&message.chat.id) {
         Some(v) =>  {
             if v.iter().find(|&x| *x == *url) != None {
                 let index = v.iter().position(|x| *x == *url).unwrap();
@@ -169,7 +175,12 @@ fn unsubscribe(
             }
         },
         None => format!("Not subbed to anything..."),
-    }
+    };
+    match serde_any::to_file("subscribers.json", &*subs) {
+        Ok(_) => {();},
+        Err(e) => {println!("Error saving subscirbers: {:?}", e);}
+    };
+    resp
 }
 
 
@@ -180,8 +191,7 @@ fn subscribe(
 ) -> String {
     let mut subs = SUBSCRIBERS.lock().unwrap();
     subs.entry(message.chat.id).or_insert(Vec::new());
-    
-    match subs.get_mut(&message.chat.id) {
+    let resp = match subs.get_mut(&message.chat.id) {
         Some(v) =>  {
             if v.iter().find(|&x| *x == *url) == None {
                 v.push(url);
@@ -193,7 +203,12 @@ fn subscribe(
             }
         },
         None => format!("Something is not right..."),
-    }
+    };
+    match serde_any::to_file("subscribers.json", &*subs) {
+        Ok(_) => {();},
+        Err(e) => {println!("Error saving subscirbers: {:?}", e);}
+    };
+    resp
 }
 
 /*
@@ -201,7 +216,7 @@ fn subscribe(
 */
 async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
     let subs = SUBSCRIBERS.lock().unwrap();
-    println!("HEY");
+    println!("Scraping!");
     for (subscriber, jobs) in &*subs {
         for job in jobs {
             
@@ -222,11 +237,14 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
                     let href = match sale.sale_href {
                         Some(l) => String::from(l),
                         None => String::from("Unknown link")
-                    };
-                                
+                    };    
+                    let size = match sale.sale_size {
+                        Some(l) => String::from(l),
+                        None => String::from("Unknown size")
+                    };    
                     match Bot::from_env().auto_send().send_message(
                         sub_id,
-                        format!("{}:\n\t{}\n{}", location, price, href)
+                        format!("{}:\n\t{}\n\t{}\n{}", location, price, size, href)
                     ).await {
                         Ok(e) => println!("{:?}", e),
                         Err(e) => println!("{:?}", e),
@@ -235,7 +253,11 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
         }
     }
-    
+    let sales = OBSERVED_SALES.lock().unwrap();
+    match serde_any::to_file("sales.json", &*sales) {
+        Ok(_) => (),
+        Err(e) => println!("Error saving subscirbers: {:?}", e)
+    };
     Ok(())
 }
 
@@ -248,7 +270,7 @@ fn filter_to_notify(subscriber: &i64, sales: Vec<Sale>) -> Vec<Sale> {
             None => String::from("missing")
         }
     }).collect();
-    match seen.get(subscriber) {
+    match seen.get_mut(subscriber) {
         Some(seen_by_sub) => {
             for sale in sales {
                 let sale_id = match &sale.sale_id {
@@ -257,6 +279,7 @@ fn filter_to_notify(subscriber: &i64, sales: Vec<Sale>) -> Vec<Sale> {
                 };
                 if !seen_by_sub.contains(&sale_id) {
                     sales_to_notify.push(sale);
+                    seen_by_sub.push(sale_id);
                 }
             }
         },
@@ -264,7 +287,6 @@ fn filter_to_notify(subscriber: &i64, sales: Vec<Sale>) -> Vec<Sale> {
             seen.insert(*subscriber, sales_ids);
         },
     }
-    // let mut to_notify = Vec::new();
     sales_to_notify
 }
 
@@ -284,12 +306,14 @@ fn scrape_url(url: &str) -> Vec<Sale> {
             let sale_location = get_location(sale);
             let sale_price = get_price(sale);
             let sale_href = get_href(sale);
+            let sale_size = get_size(sale);
 
             sales.push(Sale{ 
                 sale_id,
                 sale_location, 
                 sale_price, 
-                sale_href
+                sale_href,
+                sale_size,
             });
         }
 
@@ -328,6 +352,14 @@ fn get_location(sale: ElementRef) -> Option<String> {
     let location_selector = Selector::parse(r#"span[class="title"]"#).unwrap();
     for location_dom in sale.select(&location_selector) {
         return Some(location_dom.inner_html());
+    }
+    None
+}
+
+fn get_size(sale: ElementRef) -> Option<String> {
+    let size_selector = Selector::parse(r#"span[class="velikost"]"#).unwrap();
+    for size_dom in sale.select(&size_selector) {
+        return Some(size_dom.inner_html());
     }
     None
 }
