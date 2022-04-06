@@ -10,7 +10,6 @@ use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use tokio_cron_scheduler::{JobScheduler, Job};
 use std::thread;
-use serde_any::*;
 
 
 /*
@@ -30,13 +29,6 @@ static OBSERVED_SALES: Lazy<Mutex<HashMap<i64, Vec<String>>>> = Lazy::new(|| {
         Err(_) => Mutex::new(HashMap::new())
     }
 });
-
-// static BOT: Lazy<Mutex<AutoSend<Bot>>> = Lazy::new(|| {
-//     let mut m = Bot::from_env().auto_send();
-//     Mutex::new(m)
-// });
-
-
 
 /*
     structs:
@@ -73,34 +65,19 @@ enum Command {
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
-
-
-    log::info!("Starting simple_commands_bot...");
     let bot = Bot::from_env().auto_send();
-    // *BOT.lock().unwrap() = Some(bot.clone());
-
-    // match thread::Builder::new().name("Cron Thread".to_string()).spawn(move || {
-    //     run_cron(cron_bot);
-    // }) {
-    //     Ok(res) => println!("Run CRON thread!"),
-    //     Err(err) => println!("Running CRON thread failed.."),
-    // }
     thread::spawn(|| {
         run_cron();
     });
-    
-    
     println!("Running telegram bot!");
     teloxide::repls2::commands_repl(bot, answer, Command::ty()).await;
-    
-    // Await the result of the spawned task.
 }
 
 #[tokio::main]
 async fn run_cron() {
     let mut sched = JobScheduler::new();
   
-    match sched.add(Job::new_async("0 5,10,15,20,25,30,35,40,45,50,55,0 * * * *", move |_, _|  Box::pin(async { 
+    match sched.add(Job::new_async("0 10,20,30,40,50,0 * * * *", move |_, _|  Box::pin(async { 
         match scrape().await {
             Ok(_) => (),
             Err(e) => println!("{:?}", e)

@@ -14,3 +14,5 @@ Cargo.lock
 
 /target
 .env
+sales.json
+subscribers.json
