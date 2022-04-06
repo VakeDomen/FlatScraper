@@ -13,10 +13,6 @@ use std::thread;
 use std::env;
 use dotenv::dotenv;
 
-/*
-    static state variables
-*/
-
 static SUBSCRIBERS: Lazy<Mutex<HashMap<i64, Vec<String>>>> = Lazy::new(|| {
     match serde_any::from_file("subscribers.json") {
         Ok(hm) => Mutex::new(hm),
@@ -38,12 +34,6 @@ static FIRST_SCRAPES: Lazy<Mutex<HashMap<i64, Vec<String>>>> = Lazy::new(|| {
     }
 });
 
-/*
-    structs:
-        -Sale
-    enums:
-        -Telegram commands 
-*/
 #[derive(Clone, Debug)]
 struct Sale {
     sale_id: Option<String>,
@@ -66,16 +56,11 @@ enum Command {
     List,
 }
 
-/*
-    MAIN
-*/
-
 #[tokio::main]
 async fn main() {
     dotenv().ok();
     let token = env::var("TELEGRAM_BOT_TOKEN").expect("$TELEGRAM_BOT_TOKEN is not set");
     env::set_var("TELOXIDE_TOKEN", token);
-    
     pretty_env_logger::init();
     let bot = Bot::from_env().auto_send();
     thread::spawn(|| {
@@ -88,7 +73,6 @@ async fn main() {
 #[tokio::main]
 async fn run_cron() {
     let mut sched = JobScheduler::new();
-  
     match sched.add(Job::new_async("0 10,20,30,40,50,0 * * * *", move |_, _|  Box::pin(async { 
         match scrape().await {
             Ok(_) => (),
@@ -110,10 +94,6 @@ async fn run_cron() {
         eprintln!("Error on scheduler {:?}", e);
     }
 }
-
-/*
-    telegram command->response mapping fn
-*/
 
 async fn answer(
     bot: AutoSend<Bot>,
@@ -168,7 +148,6 @@ fn unsubscribe(
     resp
 }
 
-
 fn subscribe(
     _: &AutoSend<Bot>,
     message: Message,
@@ -196,13 +175,11 @@ fn subscribe(
     resp
 }
 
-/*
-    scraping fns
-*/
 async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let subs = SUBSCRIBERS.lock().unwrap();
-    let mut scrapes = FIRST_SCRAPES.lock().unwrap();
     println!("Scraping!");
+    let subs = SUBSCRIBERS.lock().unwrap();
+    let sales = OBSERVED_SALES.lock().unwrap();
+    let mut scrapes = FIRST_SCRAPES.lock().unwrap();
     for (subscriber, jobs) in &*subs {
         scrapes.entry(*subscriber).or_insert(Vec::new());
         for job in jobs {            
@@ -219,11 +196,9 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
                 },
                 None => false
             };
-
             if !notify {
                 continue;
             }
-
             for sale in notification_sales {
                 let sub_id = *subscriber;
                 tokio::task::spawn(async move {
@@ -254,7 +229,6 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
         }
     }
-    let sales = OBSERVED_SALES.lock().unwrap();
     match serde_any::to_file("sales.json", &*sales) {
         Ok(_) => (),
         Err(e) => println!("Error saving subscirbers: {:?}", e)
@@ -298,21 +272,16 @@ fn filter_to_notify(subscriber: &i64, sales: Vec<Sale>) -> Vec<Sale> {
 fn scrape_url(url: &str) -> Vec<Sale> {
     let mut next_page = true;
     let mut next_page_to_scrape = String::from(url);
-
     let mut sales = Vec::new();
-
     while next_page {
         let html = fetch_page(next_page_to_scrape.clone());
-        
         let selector = Selector::parse(r#"div[itemprop="item"]"#).unwrap();
         for sale in html.select(&selector) {
-            
             let sale_id = get_id(sale);
             let sale_location = get_location(sale);
             let sale_price = get_price(sale);
             let sale_href = get_href(sale);
             let sale_size = get_size(sale);
-
             sales.push(Sale{ 
                 sale_id,
                 sale_location, 
@@ -321,7 +290,6 @@ fn scrape_url(url: &str) -> Vec<Sale> {
                 sale_size,
             });
         }
-
         // is there a next page?
         next_page = has_next_page(&html);
         if next_page {
