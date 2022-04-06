@@ -10,7 +10,8 @@ use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use tokio_cron_scheduler::{JobScheduler, Job};
 use std::thread;
-
+use std::env;
+use dotenv::dotenv;
 
 /*
     static state variables
@@ -25,6 +26,13 @@ static SUBSCRIBERS: Lazy<Mutex<HashMap<i64, Vec<String>>>> = Lazy::new(|| {
 
 static OBSERVED_SALES: Lazy<Mutex<HashMap<i64, Vec<String>>>> = Lazy::new(|| {
     match serde_any::from_file("sales.json") {
+        Ok(hm) => Mutex::new(hm),
+        Err(_) => Mutex::new(HashMap::new())
+    }
+});
+
+static FIRST_SCRAPES: Lazy<Mutex<HashMap<i64, Vec<String>>>> = Lazy::new(|| {
+    match serde_any::from_file("first_scrapes.json") {
         Ok(hm) => Mutex::new(hm),
         Err(_) => Mutex::new(HashMap::new())
     }
@@ -64,6 +72,10 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
+    dotenv().ok();
+    let token = env::var("TELEGRAM_BOT_TOKEN").expect("$TELEGRAM_BOT_TOKEN is not set");
+    env::set_var("TELOXIDE_TOKEN", token);
+    
     pretty_env_logger::init();
     let bot = Bot::from_env().auto_send();
     thread::spawn(|| {
@@ -86,10 +98,6 @@ async fn run_cron() {
         Ok(c) => println!("Started cron!: {:?}", c),
         Err(e) => println!("Something went wrong scheduling CRON: {:?}", e)
     };
-
-    #[cfg(feature = "signal")]
-    sched.shutdown_on_ctrl_c();
-
     match sched.set_shutdown_handler(Box::new(|| {
         Box::pin(async move {
           println!("Shut down done");
@@ -193,13 +201,29 @@ fn subscribe(
 */
 async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
     let subs = SUBSCRIBERS.lock().unwrap();
+    let mut scrapes = FIRST_SCRAPES.lock().unwrap();
     println!("Scraping!");
     for (subscriber, jobs) in &*subs {
-        for job in jobs {
-            
+        scrapes.entry(*subscriber).or_insert(Vec::new());
+        for job in jobs {            
             let sales = scrape_url(job);
             let notification_sales = filter_to_notify(subscriber, sales);
-            
+            let notify = match scrapes.get_mut(subscriber) {
+                Some(v) => {
+                    if v.iter().find(|&x| *x == *job) != None {
+                        true
+                    } else {
+                        v.push(job.clone());
+                        false
+                    }
+                },
+                None => false
+            };
+
+            if !notify {
+                continue;
+            }
+
             for sale in notification_sales {
                 let sub_id = *subscriber;
                 tokio::task::spawn(async move {
@@ -232,6 +256,10 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
     let sales = OBSERVED_SALES.lock().unwrap();
     match serde_any::to_file("sales.json", &*sales) {
+        Ok(_) => (),
+        Err(e) => println!("Error saving subscirbers: {:?}", e)
+    };
+    match serde_any::to_file("first_scrapes.json", &*scrapes) {
         Ok(_) => (),
         Err(e) => println!("Error saving subscirbers: {:?}", e)
     };

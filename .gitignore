@@ -16,3 +16,4 @@ Cargo.lock
 .env
 sales.json
 subscribers.json
+first_scrapes.json
