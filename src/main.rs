@@ -185,9 +185,9 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
         for job in jobs {            
             println!("[scraper] for: {:?} | {:?}", subscriber, job);
             let sales = scrape_url(job);
-            println!("\t\t-> found: {:?} sales", sales.len());
+            println!("\t-> found: {:?} sales", sales.len());
             let notification_sales = filter_to_notify(subscriber, sales);
-            println!("\t\t-> sales for notification: {:?} sales", notification_sales.len());
+            println!("\t-> sales for notification: {:?} sales", notification_sales.len());
             let notify = match scrapes.get_mut(subscriber) {
                 Some(v) => {
                     if v.iter().find(|&x| *x == *job) != None {
@@ -255,6 +255,7 @@ fn filter_to_notify(subscriber: &i64, sales: Vec<Sale>) -> Vec<Sale> {
     }).collect();
     match seen.get_mut(subscriber) {
         Some(seen_by_sub) => {
+            println!("\t\t-> Some sales have beed seen before. Checking for new ones.");
             for sale in sales {
                 let sale_id = match &sale.sale_id {
                     Some(id) => String::from(id),
@@ -267,6 +268,7 @@ fn filter_to_notify(subscriber: &i64, sales: Vec<Sale>) -> Vec<Sale> {
             }
         },
         None => {
+            println!("\t\t-> Sales have never been seen before. Ignoring first batch to avoid spam.");
             seen.insert(*subscriber, sales_ids);
         },
     }
