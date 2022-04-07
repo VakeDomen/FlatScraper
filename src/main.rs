@@ -185,7 +185,9 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
         for job in jobs {            
             println!("[scraper] for: {:?} | {:?}", subscriber, job);
             let sales = scrape_url(job);
+            println!("\t\t-> found: {:?} sales", sales.len());
             let notification_sales = filter_to_notify(subscriber, sales);
+            println!("\t\t-> sales for notification: {:?} sales", notification_sales.len());
             let notify = match scrapes.get_mut(subscriber) {
                 Some(v) => {
                     if v.iter().find(|&x| *x == *job) != None {
