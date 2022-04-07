@@ -183,6 +183,7 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
     for (subscriber, jobs) in &*subs {
         scrapes.entry(*subscriber).or_insert(Vec::new());
         for job in jobs {            
+            println!("[scraper] for: {:?} | {:?}", subscriber, job);
             let sales = scrape_url(job);
             let notification_sales = filter_to_notify(subscriber, sales);
             let notify = match scrapes.get_mut(subscriber) {
