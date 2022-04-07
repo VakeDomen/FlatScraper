@@ -178,7 +178,6 @@ fn subscribe(
 async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("Scraping!");
     let subs = SUBSCRIBERS.lock().unwrap();
-    let sales = OBSERVED_SALES.lock().unwrap();
     let mut scrapes = FIRST_SCRAPES.lock().unwrap();
     for (subscriber, jobs) in &*subs {
         scrapes.entry(*subscriber).or_insert(Vec::new());
@@ -233,6 +232,7 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     }
     println!("Fisr scrapes: {:?}", scrapes);
+    let sales = OBSERVED_SALES.lock().unwrap();
     match serde_any::to_file("sales.json", &*sales) {
         Ok(_) => (),
         Err(e) => println!("Error saving subscirbers: {:?}", e)
