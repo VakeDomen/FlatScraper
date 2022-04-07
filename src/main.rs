@@ -231,7 +231,6 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
         }
     }
-    println!("Fisr scrapes: {:?}", scrapes);
     let sales = OBSERVED_SALES.lock().unwrap();
     match serde_any::to_file("sales.json", &*sales) {
         Ok(_) => (),
