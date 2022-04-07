@@ -230,13 +230,14 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
             }
         }
     }
+    println!("Fisr scrapes: {:?}", scrapes);
     match serde_any::to_file("sales.json", &*sales) {
         Ok(_) => (),
         Err(e) => println!("Error saving subscirbers: {:?}", e)
     };
     match serde_any::to_file("first_scrapes.json", &*scrapes) {
         Ok(_) => (),
-        Err(e) => println!("Error saving subscirbers: {:?}", e)
+        Err(e) => println!("Error saving fist scrapes: {:?}", e)
     };
     Ok(())
 }
