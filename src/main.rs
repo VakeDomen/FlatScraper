@@ -76,7 +76,7 @@ async fn run_cron() {
     match sched.add(Job::new_async("0 10,20,30,40,50,0 * * * *", move |_, _|  Box::pin(async { 
         match scrape().await {
             Ok(_) => (),
-            Err(e) => println!("{:?}", e)
+            Err(e) => println!("Error on scrape: {:?}", e)
         }
     })).unwrap()) {
         Ok(c) => println!("Started cron!: {:?}", c),
