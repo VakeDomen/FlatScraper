@@ -279,30 +279,34 @@ fn scrape_url(url: &str) -> Vec<Sale> {
     let mut next_page_to_scrape = String::from(url);
     let mut sales = Vec::new();
     while next_page {
-        let html = fetch_page(next_page_to_scrape.clone());
-        let selector = Selector::parse(r#"div[itemprop="item"]"#).unwrap();
-        for sale in html.select(&selector) {
-            let sale_id = get_id(sale);
-            let sale_location = get_location(sale);
-            let sale_price = get_price(sale);
-            let sale_href = get_href(sale);
-            let sale_size = get_size(sale);
-            sales.push(Sale{ 
-                sale_id,
-                sale_location, 
-                sale_price, 
-                sale_href,
-                sale_size,
-            });
-        }
-        // is there a next page?
-        next_page = has_next_page(&html);
-        if next_page {
-            next_page_to_scrape = match get_next_page_href(&html) {
-                Some(a) => a,
-                None => String::from("")
-            };
-        }
+        match fetch_page(next_page_to_scrape.clone()) {
+            Ok(html) => {
+                let selector = Selector::parse(r#"div[itemprop="item"]"#).unwrap();
+                for sale in html.select(&selector) {
+                    let sale_id = get_id(sale);
+                    let sale_location = get_location(sale);
+                    let sale_price = get_price(sale);
+                    let sale_href = get_href(sale);
+                    let sale_size = get_size(sale);
+                    sales.push(Sale{ 
+                        sale_id,
+                        sale_location, 
+                        sale_price, 
+                        sale_href,
+                        sale_size,
+                    });
+                }
+                // is there a next page?
+                next_page = has_next_page(&html);
+                if next_page {
+                    next_page_to_scrape = match get_next_page_href(&html) {
+                        Some(a) => a,
+                        None => String::from("")
+                    };
+                }
+            },
+            Err(e) => { println!("Error scraping url HTML: {:?}", e); }
+        };
     }
     sales
 }
@@ -359,13 +363,16 @@ fn get_id(sale: ElementRef) -> Option<String> {
     None
 }
 
-fn fetch_page(url: String) -> Html {
+fn fetch_page(url: String) -> Result<Html, reqwest::Error>{
     let client = Client::builder().build().unwrap();
-    let body_response = get_page_text(
-        client, 
-        url
-    ).unwrap();
-    Html::parse_document(&body_response)
+    match get_page_text(client, url) {
+        Ok(s) => Ok(Html::parse_document(&s)),
+        Err(e) => {
+            println!("Error getting page text: {:?}", e);
+            Err(e)
+        }
+    }
+    
 }
 
 fn get_page_text(client: Client, url: String) -> Result<String, reqwest::Error> {
