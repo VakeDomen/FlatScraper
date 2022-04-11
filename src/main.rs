@@ -201,9 +201,9 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
             if !notify {
                 continue;
             }
-            for sale in notification_sales {
-                let sub_id = *subscriber;
-                tokio::task::spawn(async move {
+            let sub_id = *subscriber;
+            tokio::task::spawn(async move {
+                for sale in notification_sales {
                     let location = match sale.sale_location {
                         Some(l) => String::from(l),
                         None => String::from("Unknown location")
@@ -227,8 +227,8 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
                         Ok(e) => println!("{:?}", e),
                         Err(e) => println!("{:?}", e),
                     };
-                });
-            }
+                }
+            });
         }
     }
     let sales = OBSERVED_SALES.lock().unwrap();
