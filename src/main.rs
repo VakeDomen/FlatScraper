@@ -153,6 +153,9 @@ fn subscribe(
     message: Message,
     url: String,
 ) -> String {
+    if url.is_empty() {
+        return "Please specify the URL: /subscribe <URL>".to_string();
+    }
     let mut subs = SUBSCRIBERS.lock().unwrap();
     subs.entry(message.chat.id).or_insert(Vec::new());
     let resp = match subs.get_mut(&message.chat.id) {
