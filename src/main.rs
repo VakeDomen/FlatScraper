@@ -227,8 +227,8 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
                         sub_id,
                         format!("{}:\n\t{}\n\t{}\n{}", location, price, size, href)
                     ).await {
-                        Ok(e) => println!("{:?}", e),
-                        Err(e) => println!("{:?}", e),
+                        Ok(e) => println!("Sent message: {:?}", e),
+                        Err(e) => println!("Error sending message {:#?}", e),
                     };
                 }
             });
@@ -291,13 +291,15 @@ fn scrape_url(url: &str) -> Vec<Sale> {
                     let sale_price = get_price(sale);
                     let sale_href = get_href(sale);
                     let sale_size = get_size(sale);
-                    sales.push(Sale{ 
+                    let sale = Sale{ 
                         sale_id,
                         sale_location, 
                         sale_price, 
                         sale_href,
                         sale_size,
-                    });
+                    };
+                    println!("Sale: {:?}", sale);
+                    sales.push(sale);
                 }
                 // is there a next page?
                 next_page = has_next_page(&html);
