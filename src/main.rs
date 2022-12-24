@@ -1,4 +1,10 @@
-use teloxide::{prelude2::*, utils::command::BotCommand };
+use teloxide::Bot;
+use teloxide::dispatching::repls::CommandReplExt;
+use teloxide::requests::Requester;
+use teloxide::requests::ResponseResult;
+use teloxide::types::ChatId;
+use teloxide::types::Message;
+use teloxide::utils::command::BotCommands;
 use std::result::Result;
 use reqwest::blocking::Client;
 use scraper::Html;
@@ -43,8 +49,8 @@ struct Sale {
     sale_size: Option<String>,
 }
 
-#[derive(BotCommand, Clone)]
-#[command(rename = "lowercase", description = "These commands are supported:")]
+#[derive(BotCommands, Clone)]
+#[command(rename_rule = "lowercase", description = "These commands are supported:")]
 enum Command {
     #[command(description = "display this text.")]
     Help,
@@ -62,12 +68,12 @@ async fn main() {
     let token = env::var("TELEGRAM_BOT_TOKEN").expect("$TELEGRAM_BOT_TOKEN is not set");
     env::set_var("TELOXIDE_TOKEN", token);
     pretty_env_logger::init();
-    let bot = Bot::from_env().auto_send();
+    let bot = Bot::from_env();
     thread::spawn(|| {
         run_cron();
     });
     println!("Running telegram bot!");
-    teloxide::repls2::commands_repl(bot, answer, Command::ty()).await;
+    Command::repl(bot, answer).await;
 }
 
 #[tokio::main]
@@ -96,37 +102,37 @@ async fn run_cron() {
 }
 
 async fn answer(
-    bot: AutoSend<Bot>,
+    bot: Bot,
     message: Message,
     command: Command,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> ResponseResult<()> {
     match command {
-        Command::Help => { bot.send_message(message.chat.id, Command::descriptions()).await? },
-        Command::Unsubscribe(url) => { bot.send_message(message.chat.id, unsubscribe(&bot, message, url)).await? },
-        Command::Subscribe(url) => { bot.send_message(message.chat.id, subscribe(&bot, message, url)).await? },
-        Command::List => { bot.send_message(message.chat.id, list_subscritions(&bot, message)).await? },
+        Command::Help => bot.send_message(message.chat.id, Command::descriptions().to_string()).await? ,
+        Command::Unsubscribe(url) =>  bot.send_message(message.chat.id, unsubscribe(&bot, message, url)).await? ,
+        Command::Subscribe(url) =>  bot.send_message(message.chat.id, subscribe(&bot, message, url)).await? ,
+        Command::List =>  bot.send_message(message.chat.id, list_subscritions(&bot, message)).await? ,
     };
     Ok(())
 }
 
 fn list_subscritions(
-    _: &AutoSend<Bot>,
+    _: &Bot,
     message: Message,
 )  -> String  {
     let mut subs = SUBSCRIBERS.lock().unwrap();
-    match subs.get_mut(&message.chat.id) {
+    match subs.get_mut(&message.chat.id.0) {
         Some(v) =>  v.join("\n"),
         None => format!("Not subbed to anything..."),
     }
 }
 
 fn unsubscribe(
-    _: &AutoSend<Bot>,
+    _: &Bot,
     message: Message,
     url: String,
 ) -> String {
     let mut subs = SUBSCRIBERS.lock().unwrap();
-    let resp = match subs.get_mut(&message.chat.id) {
+    let resp = match subs.get_mut(&message.chat.id.0) {
         Some(v) =>  {
             if v.iter().find(|&x| *x == *url) != None {
                 let index = v.iter().position(|x| *x == *url).unwrap();
@@ -149,7 +155,7 @@ fn unsubscribe(
 }
 
 fn subscribe(
-    _: &AutoSend<Bot>,
+    _: &Bot,
     message: Message,
     url: String,
 ) -> String {
@@ -157,8 +163,8 @@ fn subscribe(
         return "Please specify the URL: /subscribe <URL>".to_string();
     }
     let mut subs = SUBSCRIBERS.lock().unwrap();
-    subs.entry(message.chat.id).or_insert(Vec::new());
-    let resp = match subs.get_mut(&message.chat.id) {
+    subs.entry(message.chat.id.0).or_insert(Vec::new());
+    let resp = match subs.get_mut(&message.chat.id.0) {
         Some(v) =>  {
             if v.iter().find(|&x| *x == *url) == None {
                 v.push(url);
@@ -223,8 +229,8 @@ async fn scrape() -> Result<(), Box<dyn Error + Send + Sync>> {
                         Some(l) => String::from(l),
                         None => String::from("Unknown size")
                     };    
-                    match Bot::from_env().auto_send().send_message(
-                        sub_id,
+                    match Bot::from_env().send_message(
+                        ChatId(sub_id),
                         format!("{}:\n\t{}\n\t{}\n{}", location, price, size, href)
                     ).await {
                         Ok(e) => println!("Sent message: {:?}", e),
